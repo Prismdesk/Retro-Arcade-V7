@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101210">
+<title>Sudoku — Retro Arcade</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="theme.css">
+<style>
+  /* ============================================================
+     THEME — derived from the Tetris palette (theme.css), with a
+     few extra tints for cell states that Tetris didn't need.
+     ============================================================ */
+  :root{
+    --grid-bg: var(--screen-bg);         /* board / cell background */
+    --grid-line: var(--screen-mid);      /* thin cell borders  -> "subtle" */
+    --grid-line-bold: var(--page-bg);    /* 3x3 block + outer border -> "prominent" */
+    --peer: #9da59d;                     /* screen-bg tinted toward accent-bright */
+    --same-value: #b1b8af;               /* screen-bg tinted further toward accent-bright */
+    --selected: var(--accent-bright);
+    --given-ink: var(--page-bg);
+    --user-ink: var(--screen-fg);
+    --note-ink: var(--screen-fg);
+    --used-bg: #494e49;                  /* screen-bg darkened, for spent digits */
+    --danger: #ff3b30;                   /* bright, high-contrast red for mistakes */
+    --label-ink: var(--accent);          /* pronounced label color (was the dimmer screen-mid) */
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    min-height: 100%;
+    margin: 0;
+    background: var(--page-bg);
+    color: var(--accent);
+    font-family: 'Courier New', monospace;
+    letter-spacing: 0.6px;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 16px 16px calc(96px + env(safe-area-inset-bottom));
+    min-height: 100vh;
+  }
+
+  /* ============================================================
+     Top bar — Back to Arcade icon (upper-left) + Game Controls
+     icon (upper-right)
+     ============================================================ */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto 12px;
+  }
+
+  /* ============================================================
+     Shared icon-button look — square, bordered, monochrome glyphs
+     to match the retro-terminal aesthetic (no emoji).
+     ============================================================ */
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    background: var(--screen-mid);
+    color: var(--page-bg);
+    border: 2px solid var(--screen-mid);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .icon-btn svg { display: block; }
+  .icon-btn:hover { background: var(--accent); border-color: var(--accent); }
+  .icon-btn:disabled { opacity: 0.4; cursor: default; background: var(--screen-mid); border-color: var(--screen-mid); }
+  .icon-btn:disabled:hover { background: var(--screen-mid); border-color: var(--screen-mid); }
+
+  /* Top-bar nav icons (back / controls) share a lighter, outlined look */
+  .top-icon-btn {
+    background: var(--page-bg);
+    color: var(--accent);
+    border: 2px solid var(--screen-mid);
+  }
+  .top-icon-btn:hover { background: var(--page-bg); border-color: var(--accent); color: var(--accent-bright); }
+
+  /* ============================================================
+     Single-column stage — board card, then digits card
+     ============================================================ */
+  .stage-single {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    width: 100%;
+    max-width: 460px;
+    margin: 0 auto;
+  }
+
+  .panel {
+    background: var(--page-bg);
+    border: 3px solid var(--screen-mid);
+    padding: 10px;
+  }
+
+  .panel-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent-bright);
+    margin: 0 0 8px 0;
+    letter-spacing: 3px;
+    border-bottom: 1px solid var(--screen-mid);
+    padding-bottom: 4px;
+  }
+
+  /* ============================================================
+     BOARD — sized in integer pixels via JS (sizeBoard) so grid
+     lines never fall on a sub-pixel boundary and disappear/thicken
+     inconsistently when the page is zoomed.
+     ============================================================ */
+  .board-panel {
+    padding: 10px;
+    position: relative;
+  }
+
+  #board {
+    display: grid;
+    background: var(--page-bg);
+    border: 4px solid var(--grid-line-bold); /* prominent outer border */
+    margin: 0 auto;
+  }
+
+  .cell {
+    background: var(--grid-bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+  }
+
+  /* Thin lines between ordinary cells */
+  .cell.border-r { border-right: 1px solid var(--grid-line); }
+  .cell.border-b { border-bottom: 1px solid var(--grid-line); }
+  /* Thick lines around each 3x3 block */
+  .cell.border-r-bold { border-right: 3px solid var(--grid-line-bold); }
+  .cell.border-b-bold { border-bottom: 3px solid var(--grid-line-bold); }
+
+  .cell.given { cursor: default; }
+  .cell.selected { background: var(--selected); }
+  .cell.peer { background: var(--peer); }
+  .cell.same-value:not(.selected) { background: var(--same-value); }
+
+  .cell .value {
+    font-size: clamp(15px, 3.6vw, 23px);
+    font-weight: 600;
+    color: var(--user-ink);
+    line-height: 1;
+  }
+  /* Given clues: distinctly larger and bolder than user-entered digits,
+     so they read as fixed/unchangeable at a glance. */
+  .cell.given .value {
+    font-size: clamp(19px, 4.8vw, 31px);
+    font-weight: 900;
+    color: var(--given-ink);
+  }
+  /* Wrong entries: brighter red, bold, so mistakes are unmistakable. */
+  .cell.error .value {
+    color: var(--danger);
+    font-weight: 900;
+  }
+
+  /* Brief highlight animation when a row / column / box is completed */
+  .cell.flash { animation: cellFlash 0.8s ease-in-out; }
+  @keyframes cellFlash {
+    0%   { box-shadow: inset 0 0 0 40px rgba(223, 230, 219, 0); }
+    35%  { box-shadow: inset 0 0 0 40px rgba(223, 230, 219, 0.75); }
+    100% { box-shadow: inset 0 0 0 40px rgba(223, 230, 219, 0); }
+  }
+
+  /* ---- Pencil marks: 3x3 mini-grid of small candidate numbers ---- */
+  .cell .notes {
+    display: none;
+    position: absolute;
+    inset: 0;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+  }
+  .cell .notes.visible { display: grid; }
+  .cell .notes span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(6px, 1.1vw, 9px);
+    color: var(--note-ink);
+    line-height: 1;
+  }
+
+  /* ---- Draft / pencil mode toggle ---- */
+  .draft-toggle { margin-top: 10px; }
+  .draft-toggle.active {
+    background: var(--accent-bright);
+    color: var(--page-bg);
+  }
+
+  /* ============================================================
+     Overlays — Start screen & Pause screen
+     ============================================================ */
+  .board-overlay {
+    position: absolute;
+    inset: 10px;
+    background: rgba(16, 18, 16, 0.93);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 5;
+    text-align: center;
+  }
+  .board-overlay.hidden { display: none; }
+  .board-overlay .overlay-label {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 3px;
+    color: var(--accent);
+  }
+  .overlay-btn {
+    width: auto !important;
+    padding: 12px 40px !important;
+    font-size: 13px !important;
+    margin-top: 0 !important;
+  }
+
+  /* While paused, blur the grid so numbers can't be read */
+  #board.paused .value,
+  #board.paused .notes { filter: blur(6px); opacity: 0.5; }
+  #board.paused { pointer-events: none; }
+
+  /* ============================================================
+     Digits card — title removed; an erase icon now sits in the
+     top-right corner, in the space the title used to occupy.
+     ============================================================ */
+  .digits-panel { position: relative; }
+
+  .digits-header {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    min-height: 20px;
+    margin: 0 0 8px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--screen-mid);
+  }
+  .digits-header .icon-btn { width: 30px; height: 30px; }
+
+  #digits {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+  }
+
+  .digit-box {
+    background: var(--grid-bg);
+    color: var(--screen-fg);
+    border: 1px solid var(--grid-line-bold);
+    text-align: center;
+    padding: 10px 0;
+    font-size: 19px;
+    font-weight: 900;
+    letter-spacing: 1px;
+    cursor: pointer;
+  }
+  .digit-box.selected-digit { background: var(--selected); }
+  .digit-box.used { color: var(--screen-mid); background: var(--used-bg); cursor: default; }
+
+  /* ============================================================
+     Controls modal — opened from the game-controller icon
+     ============================================================ */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(16, 18, 16, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 40;
+  }
+  .modal-overlay.hidden { display: none; }
+  .modal-panel {
+    width: 100%;
+    max-width: 320px;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 0 8px 0;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--screen-mid);
+  }
+  .modal-header .panel-title { margin: 0; padding: 0; border: none; }
+  .modal-header .icon-btn { width: 28px; height: 28px; }
+
+  .controls-row {
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    color: var(--label-ink);
+  }
+  .controls-row span:last-child { color: var(--accent-bright); }
+
+  button.action {
+    width: 100%;
+    margin-top: 6px;
+    background: var(--screen-mid);
+    color: var(--accent-bright);
+    border: none;
+    padding: 8px 0;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    cursor: pointer;
+  }
+  button.action:hover { background: var(--screen-fg); }
+  button.action:disabled { opacity: 0.4; cursor: default; }
+
+  #message {
+    text-align: center;
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    min-height: 16px;
+    color: var(--accent-bright);
+  }
+
+  /* ============================================================
+     Bottom status bar — fixed to the viewport, split into live
+     stats (left) and New Game / Pause icon buttons (right).
+     ============================================================ */
+  #status-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: var(--page-bg);
+    border-top: 3px solid var(--screen-mid);
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  }
+  .status-left {
+    display: flex;
+    gap: 14px;
+    overflow-x: auto;
+  }
+  .status-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--label-ink);
+    white-space: nowrap;
+  }
+  .status-item span:last-child {
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 0.5px;
+    color: var(--accent-bright);
+  }
+  .status-right {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 380px) {
+    .status-left { gap: 10px; }
+    .status-item { font-size: 9px; }
+    .status-item span:last-child { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <a class="icon-btn top-icon-btn" href="index.html" aria-label="Back to Arcade" title="Back to Arcade">
+    <svg width="18" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 12H5M11 18l-6-6 6-6"/>
+    </svg>
+  </a>
+  <button id="controls-icon-btn" class="icon-btn top-icon-btn" aria-label="Controls" title="Controls">
+    <svg width="20" height="16" viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 2h12a5 5 0 0 1 5 5v2a5 5 0 0 1-5 5c-1.2 0-1.8-.6-2.6-1.4L14 11h-4l-1.4 1.6C7.8 13.4 7.2 14 6 14a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5Z"/>
+      <path d="M7 6v3M5.5 7.5h3"/>
+      <circle cx="16.5" cy="6" r="0.9" fill="currentColor" stroke="none"/>
+      <circle cx="18.5" cy="8.2" r="0.9" fill="currentColor" stroke="none"/>
+    </svg>
+  </button>
+</div>
+
+<div class="stage-single">
+
+  <div class="panel board-panel">
+    <div id="board"></div>
+
+    <div id="start-overlay" class="board-overlay">
+      <span class="overlay-label">SUDOKU</span>
+      <button class="action overlay-btn" id="start-btn">START</button>
+    </div>
+
+    <div id="pause-overlay" class="board-overlay hidden">
+      <span class="overlay-label">PAUSED</span>
+      <button class="action overlay-btn" id="resume-btn">RESUME</button>
+    </div>
+
+    <div id="message"></div>
+  </div>
+
+  <div class="panel digits-panel">
+    <div class="digits-header">
+      <button id="erase" class="icon-btn" aria-label="Erase" title="Erase (Del)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13 9 22H4v-5l9-9"/>
+          <path d="M13 4l7 7-4 4-7-7z"/>
+        </svg>
+      </button>
+    </div>
+    <div id="digits"></div>
+    <button class="action draft-toggle" id="draft-toggle">DRAFT MODE: OFF</button>
+  </div>
+
+</div>
+
+<div id="controls-modal" class="modal-overlay hidden">
+  <div class="panel modal-panel">
+    <div class="modal-header">
+      <p class="panel-title">CONTROLS</p>
+      <button id="controls-close" class="icon-btn" aria-label="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <path d="M5 5l14 14M19 5 5 19"/>
+        </svg>
+      </button>
+    </div>
+    <div class="controls-row"><span>MOVE</span><span>arrows</span></div>
+    <div class="controls-row"><span>PLACE</span><span>1 - 9</span></div>
+    <div class="controls-row"><span>ERASE</span><span>del / 0</span></div>
+    <div class="controls-row"><span>SELECT</span><span>click</span></div>
+    <div class="controls-row"><span>DRAFT</span><span>n</span></div>
+    <div class="controls-row"><span>PAUSE</span><span>p</span></div>
+  </div>
+</div>
+
+<div id="status-bar">
+  <div class="status-left">
+    <div class="status-item"><span>MISTAKES</span><span id="mistakes">0</span></div>
+    <div class="status-item"><span>FILLED</span><span id="filled">0/81</span></div>
+    <div class="status-item"><span>TIME</span><span id="time">00:00</span></div>
+  </div>
+  <div class="status-right">
+    <button id="new-game" class="icon-btn" aria-label="New Game" title="New Game">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12a9 9 0 0 1 15.3-6.4M21 12a9 9 0 0 1-15.3 6.4"/>
+        <path d="M18 2v4h-4M6 22v-4h4"/>
+      </svg>
+    </button>
+    <button id="pause-btn" class="icon-btn" disabled aria-label="Pause" title="Pause"></button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const SIZE = 9;
+
+  // ---- Game state ----------------------------------------------------
+  let solution = [];          // fully solved 9x9 grid
+  let puzzle = [];            // starting puzzle (0 = empty)
+  let given = [];             // true/false per cell — given clues can't be edited
+  let userGrid = [];          // current values entered by the player
+  let notes = [];             // notes[r][c] = Set of pencil-marked candidates
+  let selected = null;        // { row, col } of the selected cell, or null
+
+  let mistakes = 0;
+  let timerSeconds = 0;
+  let timerInterval = null;
+
+  let gameStarted = false;    // becomes true once Start/New Game is pressed
+  let isPaused = false;
+  let isDraftMode = false;    // pencil-mark mode toggle
+
+  // ---- DOM references --------------------------------------------------
+  const boardEl = document.getElementById('board');
+  const digitsEl = document.getElementById('digits');
+  const mistakesEl = document.getElementById('mistakes');
+  const filledEl = document.getElementById('filled');
+  const timeEl = document.getElementById('time');
+  const messageEl = document.getElementById('message');
+  const startOverlay = document.getElementById('start-overlay');
+  const pauseOverlay = document.getElementById('pause-overlay');
+  const pauseBtn = document.getElementById('pause-btn');
+  const draftToggleBtn = document.getElementById('draft-toggle');
+  const controlsModal = document.getElementById('controls-modal');
+
+  // Pause / resume icon glyphs, swapped in via innerHTML.
+  const ICON_PAUSE = '<svg width="14" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="5" y="4" width="5" height="16" rx="1"/><rect x="14" y="4" width="5" height="16" rx="1"/></svg>';
+  const ICON_PLAY = '<svg width="14" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M6 4l14 8-14 8V4z"/></svg>';
+
+  function setPauseIcon(paused){
+    pauseBtn.innerHTML = paused ? ICON_PLAY : ICON_PAUSE;
+    pauseBtn.title = paused ? 'Resume' : 'Pause';
+    pauseBtn.setAttribute('aria-label', paused ? 'Resume' : 'Pause');
+  }
+  setPauseIcon(false);
+
+  // ============================================================
+  // Sudoku generation (standard randomized backtracking)
+  // ============================================================
+  function emptyGrid(){
+    return Array.from({length: SIZE}, () => Array(SIZE).fill(0));
+  }
+
+  function emptyNotes(){
+    return Array.from({length: SIZE}, () => Array.from({length: SIZE}, () => new Set()));
+  }
+
+  function shuffle(arr){
+    for(let i = arr.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function isValid(grid, row, col, num){
+    for(let i = 0; i < SIZE; i++){
+      if(grid[row][i] === num) return false;
+      if(grid[i][col] === num) return false;
+    }
+    const br = row - row % 3, bc = col - col % 3;
+    for(let r = 0; r < 3; r++){
+      for(let c = 0; c < 3; c++){
+        if(grid[br+r][bc+c] === num) return false;
+      }
+    }
+    return true;
+  }
+
+  function fillGrid(grid){
+    for(let row = 0; row < SIZE; row++){
+      for(let col = 0; col < SIZE; col++){
+        if(grid[row][col] === 0){
+          const nums = shuffle([1,2,3,4,5,6,7,8,9]);
+          for(const num of nums){
+            if(isValid(grid, row, col, num)){
+              grid[row][col] = num;
+              if(fillGrid(grid)) return true;
+              grid[row][col] = 0;
+            }
+          }
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function makePuzzle(full, holes){
+    const grid = full.map(r => r.slice());
+    const positions = shuffle(Array.from({length: 81}, (_, i) => i));
+    let removed = 0;
+    for(const pos of positions){
+      if(removed >= holes) break;
+      const row = Math.floor(pos / 9), col = pos % 9;
+      grid[row][col] = 0;
+      removed++;
+    }
+    return grid;
+  }
+
+  // ============================================================
+  // Board sizing — keeps every column/row an exact integer pixel
+  // width so the thin/thick borders line up consistently at any
+  // zoom level or viewport size.
+  // ============================================================
+  function sizeBoard(){
+    const panel = boardEl.parentElement;
+    const style = getComputedStyle(panel);
+    const available = panel.clientWidth
+      - parseFloat(style.paddingLeft)
+      - parseFloat(style.paddingRight);
+    const cell = Math.floor(available / SIZE);
+    const total = cell * SIZE;
+    boardEl.style.width = total + 'px';
+    boardEl.style.height = total + 'px';
+    boardEl.style.gridTemplateColumns = `repeat(${SIZE}, ${cell}px)`;
+    boardEl.style.gridTemplateRows = `repeat(${SIZE}, ${cell}px)`;
+  }
+
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(sizeBoard, 100);
+  });
+
+  // ============================================================
+  // Rendering
+  // ============================================================
+  function renderBoard(){
+    boardEl.innerHTML = '';
+    for(let row = 0; row < SIZE; row++){
+      for(let col = 0; col < SIZE; col++){
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.dataset.row = row;
+        cell.dataset.col = col;
+
+        // Thin borders between ordinary cells, thick borders on 3x3 block edges
+        if(col < 8) cell.classList.add(col === 2 || col === 5 ? 'border-r-bold' : 'border-r');
+        if(row < 8) cell.classList.add(row === 2 || row === 5 ? 'border-b-bold' : 'border-b');
+        if(given[row][col]) cell.classList.add('given');
+
+        const value = document.createElement('span');
+        value.className = 'value';
+        cell.appendChild(value);
+
+        const noteGrid = document.createElement('div');
+        noteGrid.className = 'notes';
+        for(let n = 1; n <= 9; n++){
+          const noteSpan = document.createElement('span');
+          noteSpan.dataset.n = n;
+          noteGrid.appendChild(noteSpan);
+        }
+        cell.appendChild(noteGrid);
+
+        cell.addEventListener('click', () => selectCell(row, col));
+        boardEl.appendChild(cell);
+      }
+    }
+    for(let row = 0; row < SIZE; row++){
+      for(let col = 0; col < SIZE; col++){
+        refreshCell(row, col);
+      }
+    }
+    sizeBoard();
+    highlight();
+  }
+
+  // Redraws a single cell's value / pencil marks from current state
+  function refreshCell(row, col){
+    const cell = boardEl.children[row * SIZE + col];
+    const value = cell.querySelector('.value');
+    const noteGrid = cell.querySelector('.notes');
+    const v = userGrid[row][col];
+
+    if(v !== 0){
+      value.textContent = v;
+      noteGrid.classList.remove('visible');
+    } else {
+      value.textContent = '';
+      const cellNotes = notes[row][col];
+      noteGrid.classList.toggle('visible', cellNotes.size > 0);
+      [...noteGrid.children].forEach(span => {
+        const n = Number(span.dataset.n);
+        span.textContent = cellNotes.has(n) ? n : '';
+      });
+    }
+  }
+
+  function renderDigits(){
+    digitsEl.innerHTML = '';
+    for(let n = 1; n <= 9; n++){
+      const box = document.createElement('div');
+      box.className = 'digit-box';
+      box.textContent = n;
+      box.dataset.num = n;
+      box.addEventListener('click', () => handleNumberInput(n));
+      digitsEl.appendChild(box);
+    }
+    updateDigitState();
+  }
+
+  function updateDigitState(){
+    const counts = Array(10).fill(0);
+    for(let r = 0; r < SIZE; r++){
+      for(let c = 0; c < SIZE; c++){
+        if(userGrid[r][c] !== 0) counts[userGrid[r][c]]++;
+      }
+    }
+    [...digitsEl.children].forEach(box => {
+      const n = Number(box.dataset.num);
+      box.classList.toggle('used', counts[n] >= 9);
+      box.classList.toggle('selected-digit', selected && userGrid[selected.row][selected.col] === n);
+    });
+  }
+
+  function highlight(){
+    const cells = boardEl.children;
+    const selVal = selected ? userGrid[selected.row][selected.col] : 0;
+    for(let i = 0; i < cells.length; i++){
+      const cell = cells[i];
+      const r = Number(cell.dataset.row), c = Number(cell.dataset.col);
+      cell.classList.remove('selected', 'peer', 'same-value');
+      if(!selected) continue;
+      if(r === selected.row && c === selected.col){
+        cell.classList.add('selected');
+      } else if(r === selected.row || c === selected.col ||
+          (Math.floor(r/3) === Math.floor(selected.row/3) && Math.floor(c/3) === Math.floor(selected.col/3))){
+        cell.classList.add('peer');
+      }
+      if(selVal !== 0 && userGrid[r][c] === selVal){
+        cell.classList.add('same-value');
+      }
+    }
+  }
+
+  // ============================================================
+  // Game lifecycle: Start / New game / Pause / Resume
+  // ============================================================
+  function beginGame(){
+    solution = emptyGrid();
+    fillGrid(solution);
+    puzzle = makePuzzle(solution, 46);
+    given = puzzle.map(r => r.map(v => v !== 0));
+    userGrid = puzzle.map(r => r.slice());
+    notes = emptyNotes();
+    selected = null;
+    mistakes = 0;
+    timerSeconds = 0;
+    isPaused = false;
+    gameStarted = true;
+
+    mistakesEl.textContent = '0';
+    messageEl.textContent = '';
+    startOverlay.classList.add('hidden');
+    pauseOverlay.classList.add('hidden');
+    boardEl.classList.remove('paused');
+    pauseBtn.disabled = false;
+    setPauseIcon(false);
+
+    renderBoard();
+    renderDigits();
+    updateStatus();
+    startTimer();
+  }
+
+  function startTimer(){
+    if(timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      timerSeconds++;
+      const m = String(Math.floor(timerSeconds / 60)).padStart(2, '0');
+      const s = String(timerSeconds % 60).padStart(2, '0');
+      timeEl.textContent = m + ':' + s;
+    }, 1000);
+  }
+
+  function pauseGame(){
+    if(!gameStarted || isPaused) return;
+    isPaused = true;
+    if(timerInterval) clearInterval(timerInterval);
+    boardEl.classList.add('paused');
+    pauseOverlay.classList.remove('hidden');
+    setPauseIcon(true);
+  }
+
+  function resumeGame(){
+    if(!gameStarted || !isPaused) return;
+    isPaused = false;
+    boardEl.classList.remove('paused');
+    pauseOverlay.classList.add('hidden');
+    setPauseIcon(false);
+    startTimer();
+  }
+
+  function togglePause(){
+    if(isPaused) resumeGame(); else pauseGame();
+  }
+
+  // ============================================================
+  // Player interaction
+  // ============================================================
+  function selectCell(row, col){
+    if(!gameStarted || isPaused) return;
+    selected = { row, col };
+    highlight();
+    updateDigitState();
+  }
+
+  // Routed from both the number pad and the keyboard.
+  // In Draft Mode this toggles a pencil mark instead of committing a value.
+  function handleNumberInput(n){
+    if(!gameStarted || isPaused || !selected) return;
+    const { row, col } = selected;
+    if(given[row][col]) return;
+
+    if(isDraftMode){
+      toggleNote(row, col, n);
+    } else {
+      placeNumber(row, col, n);
+    }
+  }
+
+  function toggleNote(row, col, n){
+    if(userGrid[row][col] !== 0) return; // can't pencil-mark a filled cell
+    const cellNotes = notes[row][col];
+    if(cellNotes.has(n)) cellNotes.delete(n); else cellNotes.add(n);
+    refreshCell(row, col);
+  }
+
+  function placeNumber(row, col, n){
+    userGrid[row][col] = n;
+    notes[row][col].clear(); // a committed value replaces any pencil marks
+    refreshCell(row, col);
+
+    const cell = boardEl.children[row * SIZE + col];
+    cell.classList.toggle('error', solution[row][col] !== n);
+    if(solution[row][col] !== n){
+      mistakes++;
+      mistakesEl.textContent = mistakes;
+    }
+
+    clearNoteFromPeers(row, col, n); // remove that candidate from row/col/box
+
+    highlight();
+    updateDigitState();
+    updateStatus();
+    flashCompletedUnits(row, col);
+    checkWin();
+  }
+
+  // Convenience: once a number is placed, it's no longer a valid
+  // candidate for its row, column, or box, so clear matching pencil marks.
+  function clearNoteFromPeers(row, col, n){
+    const boxIndex = Math.floor(row / 3) * 3 + Math.floor(col / 3);
+    const peers = new Set([
+      ...unitCells('row', row),
+      ...unitCells('col', col),
+      ...unitCells('box', boxIndex)
+    ].map(([r, c]) => r * SIZE + c));
+
+    for(const key of peers){
+      const r = Math.floor(key / SIZE), c = key % SIZE;
+      if(notes[r][c].delete(n)) refreshCell(r, c);
+    }
+  }
+
+  function eraseCell(){
+    if(!gameStarted || isPaused || !selected) return;
+    const { row, col } = selected;
+    if(given[row][col]) return;
+    userGrid[row][col] = 0;
+    notes[row][col].clear();
+    refreshCell(row, col);
+    boardEl.children[row * SIZE + col].classList.remove('error');
+    highlight();
+    updateDigitState();
+    updateStatus();
+  }
+
+  function setDraftMode(active){
+    isDraftMode = active;
+    draftToggleBtn.textContent = 'DRAFT MODE: ' + (isDraftMode ? 'ON' : 'OFF');
+    draftToggleBtn.classList.toggle('active', isDraftMode);
+  }
+
+  // ============================================================
+  // Completion checks
+  // ============================================================
+  function unitCells(kind, index){
+    const cells = [];
+    if(kind === 'row'){
+      for(let c = 0; c < SIZE; c++) cells.push([index, c]);
+    } else if(kind === 'col'){
+      for(let r = 0; r < SIZE; r++) cells.push([r, index]);
+    } else {
+      const br = Math.floor(index / 3) * 3, bc = (index % 3) * 3;
+      for(let r = 0; r < 3; r++){
+        for(let c = 0; c < 3; c++) cells.push([br + r, bc + c]);
+      }
+    }
+    return cells;
+  }
+
+  function isUnitComplete(cells){
+    return cells.every(([r, c]) => userGrid[r][c] !== 0 && userGrid[r][c] === solution[r][c]);
+  }
+
+  function flashCompletedUnits(row, col){
+    const boxIndex = Math.floor(row / 3) * 3 + Math.floor(col / 3);
+    const candidates = [
+      { kind: 'row', index: row },
+      { kind: 'col', index: col },
+      { kind: 'box', index: boxIndex }
+    ];
+    for(const { kind, index } of candidates){
+      const cells = unitCells(kind, index);
+      if(!isUnitComplete(cells)) continue;
+      for(const [r, c] of cells){
+        const cell = boardEl.children[r * SIZE + c];
+        cell.classList.remove('flash');
+        void cell.offsetWidth; // restart animation
+        cell.classList.add('flash');
+        cell.addEventListener('animationend', () => cell.classList.remove('flash'), { once: true });
+      }
+    }
+  }
+
+  function updateStatus(){
+    let filled = 0;
+    for(let r = 0; r < SIZE; r++){
+      for(let c = 0; c < SIZE; c++){
+        if(userGrid[r][c] !== 0) filled++;
+      }
+    }
+    filledEl.textContent = filled + '/81';
+  }
+
+  function checkWin(){
+    for(let r = 0; r < SIZE; r++){
+      for(let c = 0; c < SIZE; c++){
+        if(userGrid[r][c] !== solution[r][c]) return;
+      }
+    }
+    messageEl.textContent = 'SOLVED';
+    if(timerInterval) clearInterval(timerInterval);
+    pauseBtn.disabled = true;
+  }
+
+  // ============================================================
+  // Controls modal (game-controller icon, upper-left)
+  // ============================================================
+  function openControls(){
+    controlsModal.classList.remove('hidden');
+  }
+  function closeControls(){
+    controlsModal.classList.add('hidden');
+  }
+  document.getElementById('controls-icon-btn').addEventListener('click', openControls);
+  document.getElementById('controls-close').addEventListener('click', closeControls);
+  controlsModal.addEventListener('click', (e) => {
+    if(e.target === controlsModal) closeControls();
+  });
+
+  // ============================================================
+  // Input wiring
+  // ============================================================
+  document.addEventListener('keydown', (e) => {
+    if(!gameStarted) return;
+
+    if(e.key === 'Escape'){ closeControls(); }
+
+    // Global hotkeys that work even without a cell selected
+    if(e.key === 'n' || e.key === 'N'){ setDraftMode(!isDraftMode); return; }
+    if(e.key === 'p' || e.key === 'P'){ togglePause(); return; }
+
+    if(isPaused || !selected) return;
+    const { row, col } = selected;
+
+    if(e.key >= '1' && e.key <= '9'){
+      handleNumberInput(Number(e.key));
+    } else if(e.key === 'Backspace' || e.key === 'Delete' || e.key === '0'){
+      eraseCell();
+    } else if(e.key === 'ArrowUp'){
+      selectCell(Math.max(0, row - 1), col); e.preventDefault();
+    } else if(e.key === 'ArrowDown'){
+      selectCell(Math.min(8, row + 1), col); e.preventDefault();
+    } else if(e.key === 'ArrowLeft'){
+      selectCell(row, Math.max(0, col - 1)); e.preventDefault();
+    } else if(e.key === 'ArrowRight'){
+      selectCell(row, Math.min(8, col + 1)); e.preventDefault();
+    }
+  });
+
+  document.getElementById('start-btn').addEventListener('click', beginGame);
+  document.getElementById('new-game').addEventListener('click', beginGame);
+  document.getElementById('resume-btn').addEventListener('click', resumeGame);
+  pauseBtn.addEventListener('click', togglePause);
+  document.getElementById('erase').addEventListener('click', eraseCell);
+  draftToggleBtn.addEventListener('click', () => setDraftMode(!isDraftMode));
+
+  // ============================================================
+  // Initial page state — grid lines are sized/drawn immediately,
+  // but the puzzle itself and the timer only start once the
+  // player presses Start (or New Game).
+  // ============================================================
+  given = emptyGrid().map(r => r.map(() => false));
+  userGrid = emptyGrid();
+  notes = emptyNotes();
+  renderBoard();
+  renderDigits();
+})();
+</script>
+<script>
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('service-worker.js')
+        .then((reg) => console.log('[Retro Arcade] service worker registered', reg.scope))
+        .catch((err) => console.error('[Retro Arcade] service worker registration failed', err));
+    });
+  }
+</script>
+
+</body>
+</html>

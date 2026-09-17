@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101210">
+<title>Tetris — Retro Arcade</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="theme.css">
+<style>
+  html, body{
+    height: 100%;
+    overscroll-behavior: none; /* stop pull-to-refresh while playing */
+  }
+  body{
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0;
+    overflow: hidden;
+  }
+  .page{
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 0;
+    padding: 10px 12px 0;
+    gap: 6px;
+  }
+  .back-link{ align-self: flex-start; margin-bottom: 0; }
+  .wrap{
+    display: flex;
+    gap: 18px;
+    align-items: flex-start;
+    justify-content: center;
+  }
+  .board-panel{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #board{
+    background: var(--screen-bg);
+    border: 3px solid var(--accent);
+    image-rendering: pixelated;
+    display: block;
+  }
+  .side{
+    width: 135px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Pronounced, high-contrast UI text */
+  .panel h2{
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 2.5px;
+    color: var(--accent-bright);
+  }
+  .stat-row{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin: 5px 0;
+  }
+  .stat-row span:first-child{
+    color: var(--accent);
+  }
+  .stat-row span:last-child{
+    color: var(--white);
+    font-size: 16px;
+    font-weight: 700;
+    text-shadow: 0 0 6px rgba(0,0,0,0.4);
+  }
+  canvas#next, canvas#hold{
+    display: block;
+    margin: 0 auto;
+    background: var(--screen-bg);
+    border: 1px solid var(--screen-mid);
+  }
+  .controls div{
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    font-weight: 700;
+    margin: 2px 0;
+    color: var(--screen-mid);
+  }
+  .controls div span:last-child{
+    color: var(--accent);
+  }
+  .msg{
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    line-height: 1.4;
+    min-height: 30px;
+    color: var(--accent-bright);
+  }
+
+  /* ============================================================
+     Mobile layout — narrow viewports and touch devices get a
+     compact side-by-side layout (canvas + stacked stats panel)
+     with a fixed on-screen button controller pinned to the bottom.
+     ============================================================ */
+  #control-cluster{ display: none; }
+
+  @media (max-width: 680px), (pointer: coarse){
+    .page{ padding: 8px 8px 0; gap: 4px; }
+    .back-link{ font-size: 9px; padding: 4px 8px; margin: 0; font-weight: 700; }
+
+    .wrap{ flex: 1; min-height: 0; width: 100%; flex-direction: row; align-items: stretch; justify-content: center; gap: 10px; }
+
+    /* Board card stretches to the same height as the side cards and
+       fills the space between the header and the controls — the canvas
+       is centered inside it, so growing it (below) is what closes the
+       old dead space instead of leaving it as a gap under the board. */
+    .board-panel{ min-height: 0; justify-content: center; }
+    .board-panel h2{ font-size: 9px; letter-spacing: 1.5px; margin-bottom: 3px; padding-bottom: 3px; }
+
+    /* Canvas is intentionally NOT scaled to fill the screen width —
+       it is height-driven, just given more room than before so it
+       fills the board card instead of leaving blank space beneath it. */
+    #board{
+      height: min(56vh, 440px);
+      width: auto;
+      max-width: 66vw;
+      aspect-ratio: 1 / 2;
+    }
+
+    /* Side panel: Hold / Next / Stats stay a vertical stack, just narrower.
+       It stretches to match the board card's height (same as .wrap), so
+       its top — and the HOLD card's header — lines up with the board's. */
+    .side{ width: 108px; flex-direction: column; align-items: stretch; gap: 6px; flex-shrink: 0; }
+    .side .panel{ padding: 5px 6px; }
+    .side .panel.controls{ display: none; }
+    .side .panel h2{ font-size: 9px; letter-spacing: 1.5px; margin-bottom: 3px; padding-bottom: 3px; }
+    canvas#hold, canvas#next{ width: 92px; height: 61px; }
+    .stat-row{ font-size: 10px; margin: 4px 0; }
+    .stat-row span:last-child{ font-size: 15px; }
+    .msg{ font-size: 9px; min-height: 0; margin-top: 2px; }
+
+    /* Fixed button controller pinned along the bottom of the viewport */
+    #control-cluster{
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+      width: 100%;
+      margin: 6px -8px 0;
+      padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+      background: var(--page-bg);
+      border-top: 2px solid var(--screen-mid);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .control-row{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      width: 100%;
+    }
+
+    /* Hold / Pause — bold icon buttons to the left of the D-pad */
+    .side-actions{
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .icon-btn{
+      width: 46px;
+      height: 46px;
+      border-radius: 10px;
+      background: var(--screen-mid);
+      border: 2px solid var(--screen-mid);
+      color: var(--page-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .icon-btn svg{ width: 22px; height: 22px; fill: currentColor; }
+    .icon-btn:active{ background: var(--accent); border-color: var(--accent-bright); }
+
+    /* Inverted-T arrow-key cluster + edge-to-edge hard drop bar,
+       all placed on one grid so the bar aligns exactly with the
+       outer edges of the left/right arrow buttons above it. */
+    .dpad-grid{
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: 50px 50px 40px;
+      gap: 7px;
+      width: min(232px, 62vw);
+    }
+    .dbtn{
+      background: var(--screen-mid);
+      border: 2px solid var(--screen-mid);
+      color: var(--page-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .dbtn svg{ width: 20px; height: 20px; fill: currentColor; }
+    .dbtn:active{ background: var(--accent); border-color: var(--accent-bright); }
+    .dbtn-up{ grid-column: 2; grid-row: 1; }
+    .dbtn-left{ grid-column: 1; grid-row: 2; }
+    .dbtn-down{ grid-column: 2; grid-row: 2; }
+    .dbtn-right{ grid-column: 3; grid-row: 2; }
+
+    #hardDropBtn{
+      grid-column: 1 / -1;
+      grid-row: 3;
+      background: var(--accent);
+      border: 2px solid var(--accent);
+      color: var(--page-bg);
+      font-family: inherit;
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 2px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 0;
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #hardDropBtn svg{ width: 16px; height: 16px; fill: currentColor; }
+    #hardDropBtn:active{ background: var(--white); border-color: var(--white); }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <a class="back-link" href="index.html">&larr; ARCADE</a>
+  <div class="wrap">
+  <div class="panel board-panel">
+    <h2>TETRIS</h2>
+    <canvas id="board" width="200" height="400"></canvas>
+  </div>
+  <div class="side">
+    <div class="panel">
+      <h2>HOLD (Q)</h2>
+      <canvas id="hold" width="90" height="60"></canvas>
+    </div>
+    <div class="panel">
+      <h2>NEXT</h2>
+      <canvas id="next" width="90" height="60"></canvas>
+    </div>
+    <div class="panel">
+      <h2>STATUS</h2>
+      <div class="stat-row"><span>SCORE</span><span id="score">0</span></div>
+      <div class="stat-row"><span>LEVEL</span><span id="level">1</span></div>
+      <div class="stat-row"><span>LINES</span><span id="lines">0</span></div>
+      <div class="msg" id="msg"></div>
+    </div>
+    <div class="panel controls">
+      <h2>CONTROLS</h2>
+      <div><span>MOVE</span><span>← → / A D</span></div>
+      <div><span>SOFT DROP</span><span>↓ / S</span></div>
+      <div><span>ROTATE</span><span>↑ / W</span></div>
+      <div><span>HARD DROP</span><span>SPACE</span></div>
+      <div><span>HOLD</span><span>Q</span></div>
+      <div><span>PAUSE</span><span>E</span></div>
+      <div><span>RESTART</span><span>R</span></div>
+    </div>
+  </div>
+  </div>
+
+  <div id="control-cluster">
+    <div class="control-row">
+      <div class="side-actions">
+        <button id="holdBtn" type="button" class="icon-btn" aria-label="Hold piece">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="12" height="12" rx="2"></rect><rect x="9" y="9" width="12" height="12" rx="2"></rect></svg>
+        </button>
+        <button id="pauseBtn" type="button" class="icon-btn" aria-label="Pause">
+          <svg viewBox="0 0 24 24"><rect x="5" y="4" width="5" height="16" rx="1"></rect><rect x="14" y="4" width="5" height="16" rx="1"></rect></svg>
+        </button>
+      </div>
+      <div class="dpad-grid">
+        <button class="dbtn dbtn-up" id="btnUp" type="button" aria-label="Rotate">
+          <svg viewBox="0 0 24 24"><polygon points="12,5 5,16 19,16"></polygon></svg>
+        </button>
+        <button class="dbtn dbtn-left" id="btnLeft" type="button" aria-label="Move left">
+          <svg viewBox="0 0 24 24"><polygon points="5,12 16,5 16,19"></polygon></svg>
+        </button>
+        <button class="dbtn dbtn-down" id="btnDown" type="button" aria-label="Soft drop">
+          <svg viewBox="0 0 24 24"><polygon points="12,19 5,8 19,8"></polygon></svg>
+        </button>
+        <button class="dbtn dbtn-right" id="btnRight" type="button" aria-label="Move right">
+          <svg viewBox="0 0 24 24"><polygon points="19,12 8,5 8,19"></polygon></svg>
+        </button>
+        <button id="hardDropBtn" type="button" aria-label="Hard drop">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 2v9" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"></path>
+            <polygon points="6,10 18,10 12,17"></polygon>
+            <rect x="4" y="20" width="16" height="2.5"></rect>
+          </svg>
+          HARD DROP
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const COLS = 10, ROWS = 20, CELL = 20;
+  const boardCanvas = document.getElementById('board');
+  const ctx = boardCanvas.getContext('2d');
+  const nextCanvas = document.getElementById('next');
+  const nextCtx = nextCanvas.getContext('2d');
+  const holdCanvas = document.getElementById('hold');
+  const holdCtx = holdCanvas.getContext('2d');
+
+  const scoreEl = document.getElementById('score');
+  const levelEl = document.getElementById('level');
+  const linesEl = document.getElementById('lines');
+  const msgEl = document.getElementById('msg');
+  const mobileHoldBtn = document.getElementById('holdBtn');
+  const mobilePauseBtn = document.getElementById('pauseBtn');
+  const btnUp = document.getElementById('btnUp');
+  const btnLeft = document.getElementById('btnLeft');
+  const btnDown = document.getElementById('btnDown');
+  const btnRight = document.getElementById('btnRight');
+  const hardDropBtn = document.getElementById('hardDropBtn');
+
+  const ICON_PAUSE = '<svg viewBox="0 0 24 24"><rect x="5" y="4" width="5" height="16" rx="1"></rect><rect x="14" y="4" width="5" height="16" rx="1"></rect></svg>';
+  const ICON_PLAY = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"></polygon></svg>';
+
+  const FG = getComputedStyle(document.documentElement).getPropertyValue('--screen-fg').trim();
+  const GRID = getComputedStyle(document.documentElement).getPropertyValue('--screen-mid').trim();
+  const BG = getComputedStyle(document.documentElement).getPropertyValue('--screen-bg').trim();
+
+  // Lock delay: once a piece rests on the stack, give the player a brief
+  // window to keep sliding/rotating it before it locks in place.
+  const LOCK_DELAY = 500;       // ms a resting piece waits before locking
+  const MAX_LOCK_RESETS = 15;   // cap on how many times a move/rotate can push the lock back
+
+  // Tetromino shapes, each as array of rotation states, each state = array of [x,y] cells (4x4 box)
+  const SHAPES = {
+    I: [
+      [[0,1],[1,1],[2,1],[3,1]],
+      [[2,0],[2,1],[2,2],[2,3]],
+      [[0,2],[1,2],[2,2],[3,2]],
+      [[1,0],[1,1],[1,2],[1,3]]
+    ],
+    O: [
+      [[1,0],[2,0],[1,1],[2,1]],
+      [[1,0],[2,0],[1,1],[2,1]],
+      [[1,0],[2,0],[1,1],[2,1]],
+      [[1,0],[2,0],[1,1],[2,1]]
+    ],
+    T: [
+      [[1,0],[0,1],[1,1],[2,1]],
+      [[1,0],[1,1],[2,1],[1,2]],
+      [[0,1],[1,1],[2,1],[1,2]],
+      [[1,0],[0,1],[1,1],[1,2]]
+    ],
+    S: [
+      [[1,0],[2,0],[0,1],[1,1]],
+      [[1,0],[1,1],[2,1],[2,2]],
+      [[1,1],[2,1],[0,2],[1,2]],
+      [[0,0],[0,1],[1,1],[1,2]]
+    ],
+    Z: [
+      [[0,0],[1,0],[1,1],[2,1]],
+      [[2,0],[1,1],[2,1],[1,2]],
+      [[0,1],[1,1],[1,2],[2,2]],
+      [[1,0],[0,1],[1,1],[0,2]]
+    ],
+    J: [
+      [[0,0],[0,1],[1,1],[2,1]],
+      [[1,0],[2,0],[1,1],[1,2]],
+      [[0,1],[1,1],[2,1],[2,2]],
+      [[1,0],[1,1],[0,2],[1,2]]
+    ],
+    L: [
+      [[2,0],[0,1],[1,1],[2,1]],
+      [[1,0],[1,1],[1,2],[2,2]],
+      [[0,1],[1,1],[2,1],[0,2]],
+      [[0,0],[1,0],[1,1],[1,2]]
+    ]
+  };
+  const PIECE_NAMES = Object.keys(SHAPES);
+
+  let grid, currentName, currentRot, currentX, currentY;
+  let nextName, holdName, canHold;
+  let score, level, lines, dropInterval, dropTimer, lastTime;
+  let paused, gameOver, running;
+  let bag = [];
+  let lockTimer, lockResets;
+
+  // Custom auto-repeat for held movement keys, so left/right/down glide
+  // smoothly instead of depending on the browser's inconsistent key-repeat.
+  const DAS_DELAY = 150;   // ms held before repeat kicks in
+  const DAS_REPEAT = 40;   // ms between repeats once charged
+  const SOFT_REPEAT = 40;  // ms between soft-drop repeats while held
+  let leftHeld = false, rightHeld = false, downHeld = false;
+  let horizDir = 0;        // -1 left, 1 right, 0 none — the currently "active" direction
+  let dasTimer = 0, dasCharged = false;
+  let softTimer = 0;
+
+  function newBag(){
+    let b = PIECE_NAMES.slice();
+    for(let i=b.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [b[i],b[j]] = [b[j],b[i]];
+    }
+    return b;
+  }
+
+  function drawGrid(){
+    ctx.fillStyle = BG;
+    ctx.fillRect(0,0,boardCanvas.width, boardCanvas.height);
+    ctx.strokeStyle = GRID;
+    ctx.lineWidth = 1;
+    for(let x=0;x<=COLS;x++){
+      ctx.beginPath();
+      ctx.moveTo(x*CELL,0);
+      ctx.lineTo(x*CELL, ROWS*CELL);
+      ctx.stroke();
+    }
+    for(let y=0;y<=ROWS;y++){
+      ctx.beginPath();
+      ctx.moveTo(0,y*CELL);
+      ctx.lineTo(COLS*CELL, y*CELL);
+      ctx.stroke();
+    }
+  }
+
+  function drawCell(c, x, y, filled, color){
+    const px = x*CELL, py = y*CELL;
+    if(filled){
+      c.fillStyle = color || FG;
+      c.fillRect(px+1, py+1, CELL-2, CELL-2);
+      c.strokeStyle = BG;
+      c.lineWidth = 1.5;
+      c.strokeRect(px+3, py+3, CELL-6, CELL-6);
+    }
+  }
+
+  function isResting(){
+    return collides(currentName, currentRot, currentX, currentY+1);
+  }
+
+  function resetLock(){
+    if(!isResting()) return;
+    if(lockResets < MAX_LOCK_RESETS){
+      lockTimer = 0;
+      lockResets++;
+    }
+    // once resets are exhausted, lockTimer keeps counting down to force a lock
+  }
+
+  function drawBoard(){
+    drawGrid();
+    for(let y=0;y<ROWS;y++){
+      for(let x=0;x<COLS;x++){
+        if(grid[y][x]) drawCell(ctx, x, y, true);
+      }
+    }
+    // current piece
+    const cells = SHAPES[currentName][currentRot];
+    for(const [cx,cy] of cells){
+      const x = currentX+cx, y = currentY+cy;
+      if(y>=0) drawCell(ctx, x, y, true);
+    }
+    // ghost piece
+    let ghostY = currentY;
+    while(!collides(currentName, currentRot, currentX, ghostY+1)) ghostY++;
+    ctx.strokeStyle = FG;
+    ctx.lineWidth = 1;
+    for(const [cx,cy] of cells){
+      const x = currentX+cx, y = ghostY+cy;
+      if(y>=0){
+        ctx.strokeRect(x*CELL+3, y*CELL+3, CELL-6, CELL-6);
+      }
+    }
+  }
+
+  function drawPreview(c, canvas, name){
+    c.fillStyle = BG;
+    c.fillRect(0,0,canvas.width, canvas.height);
+    if(!name) return;
+    const cells = SHAPES[name][0];
+    const cellSize = 13;
+    let minX=4,maxX=0,minY=4,maxY=0;
+    for(const [x,y] of cells){
+      minX=Math.min(minX,x); maxX=Math.max(maxX,x);
+      minY=Math.min(minY,y); maxY=Math.max(maxY,y);
+    }
+    const w = (maxX-minX+1)*cellSize;
+    const h = (maxY-minY+1)*cellSize;
+    const offX = (canvas.width - w)/2;
+    const offY = (canvas.height - h)/2;
+    for(const [x,y] of cells){
+      const px = offX + (x-minX)*cellSize;
+      const py = offY + (y-minY)*cellSize;
+      c.fillStyle = FG;
+      c.fillRect(px+1, py+1, cellSize-2, cellSize-2);
+      c.strokeStyle = BG;
+      c.lineWidth = 1.5;
+      c.strokeRect(px+2, py+2, cellSize-4, cellSize-4);
+    }
+  }
+
+  function collides(name, rot, ox, oy){
+    const cells = SHAPES[name][rot];
+    for(const [cx,cy] of cells){
+      const x = ox+cx, y = oy+cy;
+      if(x<0 || x>=COLS || y>=ROWS) return true;
+      if(y>=0 && grid[y][x]) return true;
+    }
+    return false;
+  }
+
+  function spawn(){
+    currentName = nextName;
+    if(bag.length===0) bag = newBag();
+    nextName = bag.shift();
+    currentRot = 0;
+    currentX = 3;
+    currentY = -2;
+    canHold = true;
+    lockTimer = 0;
+    lockResets = 0;
+    drawPreview(nextCtx, nextCanvas, nextName);
+    if(collides(currentName, currentRot, currentX, currentY)){
+      endGame();
+    }
+  }
+
+  function lockPiece(){
+    const cells = SHAPES[currentName][currentRot];
+    let toppedOut = false;
+    for(const [cx,cy] of cells){
+      const x = currentX+cx, y = currentY+cy;
+      if(y < 0){
+        toppedOut = true;
+        continue;
+      }
+      grid[y][x] = 1;
+    }
+    if(toppedOut){
+      endGame();
+      return;
+    }
+    clearLines();
+    spawn();
+  }
+
+  function clearLines(){
+    let cleared = 0;
+    for(let y=ROWS-1;y>=0;y--){
+      if(grid[y].every(v=>v)){
+        grid.splice(y,1);
+        grid.unshift(new Array(COLS).fill(0));
+        cleared++;
+        y++;
+      }
+    }
+    if(cleared>0){
+      const points = [0,100,300,500,800][cleared] * level;
+      score += points;
+      lines += cleared;
+      level = Math.floor(lines/10) + 1;
+      dropInterval = Math.max(100, 1000 - (level-1)*80);
+      updateStats();
+    }
+  }
+
+  function updateStats(){
+    scoreEl.textContent = score;
+    levelEl.textContent = level;
+    linesEl.textContent = lines;
+  }
+
+  function move(dx){
+    if(!collides(currentName, currentRot, currentX+dx, currentY)){
+      currentX += dx;
+      resetLock();
+    }
+  }
+
+  function softDrop(){
+    if(!collides(currentName, currentRot, currentX, currentY+1)){
+      currentY += 1;
+      score += 1;
+      updateStats();
+    }
+    // if already resting, softDrop does nothing extra — the lock-delay
+    // window (see loop()) is what gives the player time to reposition
+  }
+
+  function hardDrop(){
+    let dist = 0;
+    while(!collides(currentName, currentRot, currentX, currentY+1)){
+      currentY += 1;
+      dist++;
+    }
+    score += dist*2;
+    updateStats();
+    lockPiece(); // hard drop always locks immediately, no delay
+  }
+
+  function rotate(){
+    const newRot = (currentRot+1)%4;
+    const kicks = [0, -1, 1, -2, 2];
+    for(const k of kicks){
+      if(!collides(currentName, newRot, currentX+k, currentY)){
+        currentRot = newRot;
+        currentX += k;
+        resetLock();
+        return;
+      }
+    }
+  }
+
+  function doHold(){
+    if(!canHold) return;
+    canHold = false;
+    if(holdName === null){
+      holdName = currentName;
+      spawn();
+    } else {
+      const tmp = holdName;
+      holdName = currentName;
+      currentName = tmp;
+      currentRot = 0;
+      currentX = 3;
+      currentY = -2;
+      lockTimer = 0;
+      lockResets = 0;
+    }
+    drawPreview(holdCtx, holdCanvas, holdName);
+  }
+
+  function endGame(){
+    gameOver = true;
+    running = false;
+    msgEl.innerHTML = '<span class="flash">GAME OVER</span><br>PRESS R TO RESTART';
+  }
+
+  function togglePause(){
+    if(gameOver) return;
+    paused = !paused;
+    if(paused){
+      msgEl.innerHTML = '<span class="flash">PAUSED</span><br>PRESS E TO RESUME';
+      mobilePauseBtn.innerHTML = ICON_PLAY;
+      mobilePauseBtn.setAttribute('aria-label', 'Resume');
+    } else {
+      msgEl.textContent = '';
+      mobilePauseBtn.innerHTML = ICON_PAUSE;
+      mobilePauseBtn.setAttribute('aria-label', 'Pause');
+      lastTime = performance.now();
+      requestAnimationFrame(loop);
+    }
+  }
+
+  function resetGame(){
+    grid = Array.from({length: ROWS}, ()=> new Array(COLS).fill(0));
+    score = 0; level = 1; lines = 0;
+    dropInterval = 1000;
+    dropTimer = 0;
+    paused = false;
+    gameOver = false;
+    running = true;
+    holdName = null;
+    canHold = true;
+    horizDir = 0;
+    dasTimer = 0;
+    dasCharged = false;
+    softTimer = 0;
+    bag = newBag();
+    nextName = bag.shift();
+    msgEl.textContent = '';
+    mobilePauseBtn.innerHTML = ICON_PAUSE;
+    mobilePauseBtn.setAttribute('aria-label', 'Pause');
+    updateStats();
+    drawPreview(holdCtx, holdCanvas, null);
+    spawn();
+    lastTime = performance.now();
+    requestAnimationFrame(loop);
+  }
+
+  function loop(time){
+    if(!running || paused || gameOver) return;
+    const delta = time - lastTime;
+    lastTime = time;
+
+    if(isResting()){
+      // piece has landed — hold it here briefly so the player can slide/rotate it
+      lockTimer += delta;
+      if(lockTimer >= LOCK_DELAY){
+        lockPiece();
+      }
+    } else {
+      dropTimer += delta;
+      if(dropTimer > dropInterval){
+        dropTimer = 0;
+        if(!collides(currentName, currentRot, currentX, currentY+1)){
+          currentY += 1;
+        }
+      }
+    }
+
+    // smooth held-key auto-repeat, independent of OS key-repeat timing
+    if(horizDir !== 0){
+      dasTimer += delta;
+      if(!dasCharged){
+        if(dasTimer >= DAS_DELAY){
+          dasCharged = true;
+          dasTimer = 0;
+          move(horizDir);
+        }
+      } else {
+        while(dasTimer >= DAS_REPEAT){
+          dasTimer -= DAS_REPEAT;
+          move(horizDir);
+        }
+      }
+    }
+    if(downHeld){
+      softTimer += delta;
+      while(softTimer >= SOFT_REPEAT){
+        softTimer -= SOFT_REPEAT;
+        softDrop();
+      }
+    }
+
+    drawBoard();
+    requestAnimationFrame(loop);
+  }
+
+  document.addEventListener('keydown', (e)=>{
+    if(e.repeat) return; // we handle all repeat timing ourselves below
+    const key = e.key.toLowerCase();
+
+    if(key === 'r'){
+      e.preventDefault();
+      resetGame();
+      return;
+    }
+    if(key === 'e'){
+      e.preventDefault();
+      togglePause();
+      return;
+    }
+    if(gameOver || paused) return;
+
+    switch(key){
+      case 'arrowleft':
+      case 'a':
+        e.preventDefault();
+        leftHeld = true;
+        horizDir = -1;
+        dasTimer = 0;
+        dasCharged = false;
+        move(-1);
+        drawBoard();
+        break;
+      case 'arrowright':
+      case 'd':
+        e.preventDefault();
+        rightHeld = true;
+        horizDir = 1;
+        dasTimer = 0;
+        dasCharged = false;
+        move(1);
+        drawBoard();
+        break;
+      case 'arrowdown':
+      case 's':
+        e.preventDefault();
+        downHeld = true;
+        softTimer = 0;
+        softDrop();
+        drawBoard();
+        break;
+      case 'arrowup':
+      case 'w':
+        e.preventDefault();
+        rotate();
+        drawBoard();
+        break;
+      case ' ':
+        e.preventDefault();
+        hardDrop();
+        drawBoard();
+        break;
+      case 'q':
+        e.preventDefault();
+        doHold();
+        drawBoard();
+        break;
+    }
+  });
+
+  document.addEventListener('keyup', (e)=>{
+    const key = e.key.toLowerCase();
+    switch(key){
+      case 'arrowleft':
+      case 'a':
+        leftHeld = false;
+        if(horizDir === -1){
+          horizDir = rightHeld ? 1 : 0;
+          dasTimer = 0;
+          dasCharged = false;
+        }
+        break;
+      case 'arrowright':
+      case 'd':
+        rightHeld = false;
+        if(horizDir === 1){
+          horizDir = leftHeld ? -1 : 0;
+          dasTimer = 0;
+          dasCharged = false;
+        }
+        break;
+      case 'arrowdown':
+      case 's':
+        downHeld = false;
+        break;
+    }
+  });
+
+  // ============================================================
+  // On-screen Button Controller
+  // Left/Right/Down are press-and-hold buttons that drive the same
+  // DAS auto-repeat (horizDir/dasTimer) and soft-drop repeat
+  // (downHeld/softTimer) state used by the keyboard in loop().
+  // Up, Hard Drop, Hold and Pause are one-shot presses.
+  // Pointer events cover touch, mouse and pen with one code path.
+  // ============================================================
+  function bindPressAndHold(el, onPress, onRelease){
+    let active = false;
+    const press = (e) => {
+      e.preventDefault();
+      if(active) return;
+      active = true;
+      el.setPointerCapture && e.pointerId != null && el.setPointerCapture(e.pointerId);
+      if(gameOver || paused) return;
+      onPress();
+    };
+    const release = (e) => {
+      if(e) e.preventDefault();
+      if(!active) return;
+      active = false;
+      onRelease();
+    };
+    el.addEventListener('pointerdown', press);
+    el.addEventListener('pointerup', release);
+    el.addEventListener('pointercancel', release);
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  function bindPress(el, onPress){
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if(gameOver || paused) return;
+      onPress();
+    });
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  bindPressAndHold(btnLeft,
+    () => {
+      leftHeld = true;
+      horizDir = -1;
+      dasTimer = 0;
+      dasCharged = false;
+      move(-1);
+      drawBoard();
+    },
+    () => {
+      leftHeld = false;
+      if(horizDir === -1){
+        horizDir = rightHeld ? 1 : 0;
+        dasTimer = 0;
+        dasCharged = false;
+      }
+    }
+  );
+
+  bindPressAndHold(btnRight,
+    () => {
+      rightHeld = true;
+      horizDir = 1;
+      dasTimer = 0;
+      dasCharged = false;
+      move(1);
+      drawBoard();
+    },
+    () => {
+      rightHeld = false;
+      if(horizDir === 1){
+        horizDir = leftHeld ? -1 : 0;
+        dasTimer = 0;
+        dasCharged = false;
+      }
+    }
+  );
+
+  bindPressAndHold(btnDown,
+    () => {
+      downHeld = true;
+      softTimer = 0;
+      softDrop();
+      drawBoard();
+    },
+    () => {
+      downHeld = false;
+    }
+  );
+
+  bindPress(btnUp, () => {
+    rotate();
+    drawBoard();
+  });
+
+  bindPress(hardDropBtn, () => {
+    hardDrop();
+    drawBoard();
+  });
+
+  mobileHoldBtn.addEventListener('click', () => {
+    if(gameOver || paused) return;
+    doHold();
+    drawBoard();
+  });
+  mobilePauseBtn.addEventListener('click', togglePause);
+
+  resetGame();
+})();
+</script>
+<script>
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('service-worker.js')
+        .then((reg) => console.log('[Retro Arcade] service worker registered', reg.scope))
+        .catch((err) => console.error('[Retro Arcade] service worker registration failed', err));
+    });
+  }
+</script>
+</body>
+</html>
